@@ -20,11 +20,23 @@ import (
 )
 
 type Client struct {
-	Host         string
+	// the host to connect to
+	Host string
+
+	// the client config to use
 	ClientConfig *ssh.ClientConfig
-	Session      *ssh.Session
-	Conn         ssh.Conn
-	Timeout      time.Duration
+
+	// stores the SSH session while the connection is running
+	Session *ssh.Session
+
+	// stores the SSH connection itself in order to close it after transfer
+	Conn ssh.Conn
+
+	// the clients waits for the given timeout until given up the connection
+	Timeout time.Duration
+
+	// the absolute path to the remote SCP binary
+	RemoteBinary string
 }
 
 // Connects to the remote SSH server, returns error if it couldn't establish a session to the SSH server
@@ -136,6 +148,22 @@ func (a *Client) CopyFromRemote(remotePath string) (io.Reader, os.FileMode, erro
 	return <-readerCh, c.Permissions, nil
 }
 
+// Checks the response it reads from the remote, and will return a single error in case
+// of failure
+func checkResponse(r io.Reader) error {
+	response, err := ParseResponse(r)
+	if err != nil {
+		return err
+	}
+
+	if response.IsFailure() {
+		return errors.New(response.GetMessage())
+	}
+
+	return nil
+
+}
+
 // Copies the contents of an io.Reader to a remote location
 func (a *Client) Copy(r io.Reader, remotePath string, permissions string, size int64) error {
 	filename := path.Base(remotePath)
@@ -195,6 +223,7 @@ func (a *Client) Copy(r io.Reader, remotePath string, permissions string, size i
 	if waitTimeout(wg, a.Timeout) {
 		return errors.New("timeout when upload files")
 	}
+
 	close(errCh)
 	for err := range errCh {
 		if err != nil {
